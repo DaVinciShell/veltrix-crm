@@ -1,0 +1,56 @@
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+
+# CRM records, databases, backups, and uploaded documents
+data/
+data_original/
+instance/
+respaldos/
+backups/
+documentos/
+uploads/
+*.db
+*.sqlite
+*.sqlite3
+*-wal
+*-shm
+*-journal
+
+# Private business spreadsheets
+*.xls
+*.xlsx
+*.xlsm
+
+# Provider credentials and generated temporary files
+credentials.json
+client_secret*.json
+token.json
+*.p8
+*.jks
+*.keystore
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+coverage/
+.coverage
+
+# Logs and local editor/OS files
+*.log
+.DS_Store
+Thumbs.db
+.vscode/

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VELTRIX CRM</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<aside id="side">
+  <div class="brand"><span class="logo">V</span><div><b>VELTRIX</b><small>CRM comercial</small></div></div>
+  <nav id="nav">
+    <a href="#hoy" data-r="hoy">◉ Hoy</a>
+    <a href="#pipeline" data-r="pipeline">▦ Pipeline</a>
+    <a href="#empresas" data-r="empresas">▤ Empresas</a>
+    <a href="#seguimientos" data-r="seguimientos">↻ Seguimientos</a>
+    <a href="#dashboard" data-r="dashboard">◔ Dashboard</a>
+    <a href="#documentos" data-r="documentos">▭ Documentos</a>
+    <a href="#tareas" data-r="tareas">✓ Tareas y avisos</a>
+  </nav>
+  <div class="side-foot">
+    <a href="#calidad" data-r="calidad">⚑ Calidad de datos</a>
+    <a href="#config" data-r="config">⚙ Configuración</a>
+    <a href="#importar" data-r="importar">⇪ Importar base</a>
+    <a href="/api/respaldo">⤓ Copia de seguridad</a>
+  </div>
+</aside>
+<main>
+  <header id="top">
+    <input id="busq" type="search" placeholder="Buscar empresa, NIT, contacto, teléfono…  ( / )" autocomplete="off">
+    <a class="btn" id="bell" href="#tareas" title="Avisos">🔔 <b id="bn">0</b></a><button class="btn primary" id="btnNueva">+ Empresa</button>
+  </header>
+  <section id="view"></section>
+</main>
+<div id="modal" class="modal hidden"><div class="box"><div class="mh"><b id="mt"></b><button class="x" id="mx">×</button></div><div id="mb"></div></div></div>
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+<script src="/static/extras.js"></script>
+</body>
+</html>
