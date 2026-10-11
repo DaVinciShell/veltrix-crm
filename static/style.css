@@ -3,6 +3,7 @@
 html,body{margin:0;height:100%}
 body{font:14px/1.45 -apple-system,"Segoe UI",Inter,Roboto,sans-serif;color:var(--ink);background:var(--bg);display:flex}
 a{color:var(--acc2);text-decoration:none}
+a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--acc2);outline-offset:2px}
 #side{width:210px;background:var(--navy);color:#cfd8e6;display:flex;flex-direction:column;padding:16px 10px;position:sticky;top:0;height:100vh;flex:none}
 .brand{display:flex;gap:10px;align-items:center;padding:4px 8px 18px;color:#fff}
 .brand small{display:block;color:#8a98ae;font-size:11px}
@@ -69,9 +70,10 @@ tr.click{cursor:pointer}tr.click:hover td{background:#f8fafc}
  body{display:block}
  #side{width:100%;height:auto;position:fixed;bottom:0;left:0;top:auto;z-index:20;flex-direction:row;padding:4px;border-top:1px solid #22344f}
  .brand,.side-foot a[href^="/api"]{display:none}
- .side-foot a{white-space:nowrap}
- #nav{flex-direction:row;flex:1;justify-content:space-around}#nav a{padding:8px 6px;font-size:11px;text-align:center}
- .side-foot{margin:0;border:0;padding:0}.side-foot a{font-size:11px;padding:8px 6px}
+ #nav{flex:1 1 auto;min-width:0;overflow-x:auto;scrollbar-width:none;flex-direction:row;justify-content:flex-start}#nav::-webkit-scrollbar{display:none}#nav a{flex:0 0 auto;white-space:nowrap;padding:8px 6px;font-size:11px;text-align:center}
+ #side{overflow:hidden;gap:0}
+ #nav{flex:0 0 65%;width:65%;max-width:65%}
+ .side-foot{display:flex;flex:0 0 35%;width:35%;max-width:35%;min-width:0;overflow-x:auto;scrollbar-width:none;white-space:nowrap;margin:0;border:0;padding:0}.side-foot::-webkit-scrollbar{display:none}.side-foot a{flex:0 0 auto;font-size:11px;padding:8px 6px}
  #top{padding:10px 12px}#view{padding:14px 12px 90px}
  .f2{grid-template-columns:1fr}.col{flex-basis:80vw}
  th:nth-child(n+5),td:nth-child(n+5){display:none}.tw.keep th,.tw.keep td{display:table-cell}

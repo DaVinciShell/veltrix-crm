@@ -54,6 +54,8 @@ Suma ponderada (0-100): ubicación 25, sector 25, tamaño 20, datos de contacto 
 ## Pruebas
 `python tests/test_flujo.py` (circuito comercial) y `python tests/test_mejoras.py` (funciones nuevas). Usan bases temporales y un Excel sintético generado en memoria; no requieren ni leen la base empresarial original.
 
+Las pruebas del flujo cubren paginación acotada, validación CRUD y escrituras concurrentes de empresas por NIT, oportunidades activas, importaciones y cobros. El backend serializa esas comprobaciones con transacciones SQLite inmediatas; no se agregó ni alteró el esquema. Paginación inválida y referencias inexistentes de contactos/tareas se responden con errores HTTP en vez de excepciones internas o éxito silencioso.
+
 ## Datos locales
 La base operativa vive en `data\crm.db` y se excluye del repositorio junto con claves, respaldos, documentos privados y hojas empresariales. Si ya existe una base con trabajo propio, **no la reemplace**: haga una copia aparte primero. El paquete de código no distribuye datos empresariales.
 Primer arranque: `iniciar.bat` (o `python app.py`), abra http://localhost:5000 y cree su usuario.

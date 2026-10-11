@@ -193,29 +193,61 @@ def register(app, A):
     def _tarea(d, parcial=False):
         out = {}
         if "titulo" in d or not parcial:
-            if not (d.get("titulo") or "").strip():
+            titulo = d.get("titulo")
+            if not isinstance(titulo, str) or not titulo.strip():
                 raise A.ApiError("Escriba el título de la tarea.")
-            out["titulo"] = d["titulo"].strip()
+            out["titulo"] = titulo.strip()
         if "fecha" in d or not parcial:
             if not A.valid_date(d.get("fecha")):
                 raise A.ApiError("Fecha no válida (AAAA-MM-DD).")
             out["fecha"] = d["fecha"]
-        if d.get("hora"):
-            if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", d["hora"]):
+        if d.get("hora") not in (None, ""):
+            if not isinstance(d["hora"], str) or not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", d["hora"]):
                 raise A.ApiError("Hora no válida (HH:MM).")
             out["hora"] = d["hora"]
         elif "hora" in d:
             out["hora"] = None
         if "tipo" in d:
+            if not isinstance(d["tipo"], str):
+                raise A.ApiError("Tipo de tarea no válido.")
             out["tipo"] = d["tipo"] if d["tipo"] in TIPOS_TAREA else "Otro"
         if "frecuencia" in d:
-            if d["frecuencia"] not in FRECUENCIAS:
+            if not isinstance(d["frecuencia"], str) or d["frecuencia"] not in FRECUENCIAS:
                 raise A.ApiError("Frecuencia no válida.")
             out["frecuencia"] = d["frecuencia"]
+        lookup = {
+            "empresa_id": ("empresas", "Empresa"),
+            "oportunidad_id": ("oportunidades", "Oportunidad"),
+            "documento_id": ("documentos", "Documento"),
+        }
         for k in ("empresa_id", "oportunidad_id", "documento_id"):
-            if d.get(k):
-                out[k] = int(d[k])
+            if k in d and d[k] not in (None, ""):
+                if isinstance(d[k], bool) or not isinstance(d[k], (str, int)):
+                    raise A.ApiError(f"{lookup[k][1]} no válido.")
+                try:
+                    value = int(d[k])
+                except (TypeError, ValueError):
+                    raise A.ApiError(f"{lookup[k][1]} no válido.")
+                if value <= 0:
+                    raise A.ApiError(f"{lookup[k][1]} no válido.")
+                table, label = lookup[k]
+                if not A.one(f"SELECT id FROM {table} WHERE id=?", (value,)):
+                    raise A.ApiError(f"{label} no encontrada.", 404)
+                out[k] = value
+        empresa_id = out.get("empresa_id")
+        oportunidad_id = out.get("oportunidad_id")
+        documento_id = out.get("documento_id")
+        if empresa_id and oportunidad_id and A.one("SELECT id FROM oportunidades WHERE id=? AND empresa_id=?", (oportunidad_id, empresa_id)) is None:
+            raise A.ApiError("La oportunidad no corresponde a la empresa indicada.")
+        if documento_id:
+            documento = A.one("SELECT empresa_id,oportunidad_id FROM documentos WHERE id=?", (documento_id,))
+            if empresa_id and documento["empresa_id"] != empresa_id:
+                raise A.ApiError("El documento no corresponde a la empresa indicada.")
+            if oportunidad_id and documento["oportunidad_id"] != oportunidad_id:
+                raise A.ApiError("El documento no corresponde a la oportunidad indicada.")
         if "notificar_correo" in d:
+            if not isinstance(d["notificar_correo"], bool):
+                raise A.ApiError("La opción de notificación por correo debe ser booleana.")
             out["notificar_correo"] = 1 if d["notificar_correo"] else 0
         return out
 
@@ -224,8 +256,14 @@ def register(app, A):
         est = request.args.get("estado", "pendiente")
         w, p = ["k.estado=?"], [est]
         if request.args.get("empresa_id"):
+            try:
+                empresa_id = int(request.args["empresa_id"])
+            except ValueError:
+                raise A.ApiError("empresa_id debe ser un entero.")
+            if empresa_id <= 0:
+                raise A.ApiError("empresa_id debe ser positivo.")
             w.append("k.empresa_id=?")
-            p.append(int(request.args["empresa_id"]))
+            p.append(empresa_id)
         return jsonify(A.rows(f"""SELECT k.*, e.razon FROM tareas k LEFT JOIN empresas e ON e.id=k.empresa_id WHERE {' AND '.join(w)}
             ORDER BY k.fecha, k.hora LIMIT 300""", p))
 
@@ -240,6 +278,8 @@ def register(app, A):
 
     @app.put("/api/tareas/<int:tid>")
     def editar_tarea(tid):
+        if not A.one("SELECT id FROM tareas WHERE id=?", (tid,)):
+            raise A.ApiError("Tarea no encontrada.", 404)
         d = _tarea(A.body(), True)
         if d:
             A.get_db().execute(f"UPDATE tareas SET {','.join(k + '=?' for k in d)} WHERE id=?", list(d.values()) + [tid])
@@ -266,6 +306,8 @@ def register(app, A):
 
     @app.delete("/api/tareas/<int:tid>")
     def cancelar_tarea(tid):
+        if not A.one("SELECT id FROM tareas WHERE id=?", (tid,)):
+            raise A.ApiError("Tarea no encontrada.", 404)
         A.get_db().execute("UPDATE tareas SET estado='cancelada' WHERE id=?", (tid,))
         A.get_db().commit()
         return jsonify({"ok": True})

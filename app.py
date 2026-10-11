@@ -188,7 +188,12 @@ def num(v):
 
 
 def body():
-    return request.get_json(silent=True) or {}
+    data = request.get_json(silent=True)
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ApiError("El cuerpo JSON debe ser un objeto.")
+    return data
 
 
 def valid_date(s):
@@ -270,10 +275,15 @@ SORTS = {"razon": "e.razon_norm", "activos": "e.activos DESC", "prioridad": "e.p
 @app.get("/api/empresas")
 def listar_empresas():
     a = request.args
+    try:
+        per = int(a.get("per", 50))
+        page = int(a.get("page", 1))
+    except ValueError:
+        raise ApiError("Los parámetros per y page deben ser enteros.")
+    per = max(1, min(per, 200))
+    page = max(page, 1)
     where, p = filtros_empresas(a)
     total = one(f"SELECT COUNT(*) n FROM empresas e{where}", p)["n"]
-    per = min(int(a.get("per", 50)), 200)
-    page = max(int(a.get("page", 1)), 1)
     order = SORTS.get(a.get("orden"), "e.razon_norm")
     data = rows(f"{BASE_SELECT}{where} ORDER BY {order} LIMIT ? OFFSET ?", p + [per, (page - 1) * per])
     return jsonify({"total": total, "page": page, "per": per, "items": data})
@@ -339,20 +349,29 @@ def validar_empresa(d, parcial=False):
 
 @app.post("/api/empresas")
 def crear_empresa():
-    d = validar_empresa(body())
+    payload = body()
+    contacto = payload.get("contacto")
+    contacto_datos = None
+    if contacto is not None:
+        if not isinstance(contacto, dict):
+            raise ApiError("El contacto debe ser un objeto.")
+        contacto_datos = {k: texto_contacto(contacto, k) for k in ("nombre", "cargo", "telefono", "correo")}
+        if contacto_datos["correo"] and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", contacto_datos["correo"]):
+            raise ApiError("El correo no parece válido.")
+    d = validar_empresa(payload)
     d.setdefault("prioridad", "P3")
     d["origen"], d["creado"] = "manual", ahora()
+    db = get_db()
+    db.execute("BEGIN IMMEDIATE")
     if d.get("nit") and one("SELECT id FROM empresas WHERE nit=?", (d["nit"],)):
         ex = one("SELECT id,razon FROM empresas WHERE nit=?", (d["nit"],))
         raise ApiError(f"Ya existe una empresa con ese NIT: {ex['razon']}", 409, {"existente": ex["id"]})
-    db = get_db()
     cols = ",".join(d)
     cur = db.execute(f"INSERT INTO empresas({cols}) VALUES({','.join('?' * len(d))})", list(d.values()))
     eid = cur.lastrowid
-    c = body().get("contacto")
-    if c and any(c.get(k) for k in ("nombre", "telefono", "correo")):
+    if contacto_datos and any(contacto_datos[k] for k in ("nombre", "telefono", "correo")):
         db.execute("INSERT INTO contactos(empresa_id,nombre,cargo,telefono,correo,creado) VALUES(?,?,?,?,?,?)",
-                   (eid, c.get("nombre"), c.get("cargo"), c.get("telefono"), c.get("correo"), ahora()))
+                   (eid, *((contacto_datos[k] or None) for k in ("nombre", "cargo", "telefono", "correo")), ahora()))
     db.commit()
     MB.clasificar_todo(db, solo_nulos=True)
     MB.puntuar_todo(db, solo_nulos=True)
@@ -408,17 +427,27 @@ def borrar_empresa(eid):
 
 
 # ---------------------------------------------------------------- contactos
+def texto_contacto(d, campo):
+    valor = d.get(campo)
+    if valor is None:
+        return ""
+    if not isinstance(valor, str):
+        raise ApiError(f"El campo {campo} debe ser texto.")
+    return valor.strip()
+
+
 @app.post("/api/empresas/<int:eid>/contactos")
 def crear_contacto(eid):
     d = body()
-    if not any((d.get(k) or "").strip() for k in ("nombre", "telefono", "correo")):
+    valores = {k: texto_contacto(d, k) for k in ("nombre", "cargo", "telefono", "correo")}
+    if not any(valores[k] for k in ("nombre", "telefono", "correo")):
         raise ApiError("Indique al menos nombre, teléfono o correo.")
-    if d.get("correo") and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", d["correo"].strip()):
+    if valores["correo"] and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", valores["correo"]):
         raise ApiError("El correo no parece válido.")
     if not one("SELECT id FROM empresas WHERE id=?", (eid,)):
         raise ApiError("Empresa no encontrada.", 404)
     cur = get_db().execute("INSERT INTO contactos(empresa_id,nombre,cargo,telefono,correo,creado) VALUES(?,?,?,?,?,?)",
-                           (eid, *(((d.get(k) or "").strip() or None) for k in ("nombre", "cargo", "telefono", "correo")), ahora()))
+                           (eid, *((valores[k] or None) for k in ("nombre", "cargo", "telefono", "correo")), ahora()))
     get_db().commit()
     return jsonify({"id": cur.lastrowid}), 201
 
@@ -426,16 +455,21 @@ def crear_contacto(eid):
 @app.put("/api/contactos/<int:cid>")
 def editar_contacto(cid):
     d = body()
-    if d.get("correo") and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", d["correo"].strip()):
+    if not one("SELECT id FROM contactos WHERE id=?", (cid,)):
+        raise ApiError("Contacto no encontrado.", 404)
+    valores = {k: texto_contacto(d, k) for k in ("nombre", "cargo", "telefono", "correo")}
+    if valores["correo"] and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", valores["correo"]):
         raise ApiError("El correo no parece válido.")
     get_db().execute("UPDATE contactos SET nombre=?,cargo=?,telefono=?,correo=? WHERE id=?",
-                     (*(((d.get(k) or "").strip() or None) for k in ("nombre", "cargo", "telefono", "correo")), cid))
+                     (*((valores[k] or None) for k in ("nombre", "cargo", "telefono", "correo")), cid))
     get_db().commit()
     return jsonify({"ok": True})
 
 
 @app.delete("/api/contactos/<int:cid>")
 def borrar_contacto(cid):
+    if not one("SELECT id FROM contactos WHERE id=?", (cid,)):
+        raise ApiError("Contacto no encontrado.", 404)
     get_db().execute("UPDATE interacciones SET contacto_id=NULL WHERE contacto_id=?", (cid,))
     get_db().execute("DELETE FROM contactos WHERE id=?", (cid,))
     get_db().commit()
@@ -470,7 +504,7 @@ def registrar_etapa(oid, etapa):
 
 
 def exigir_paso(proximo_paso, fecha):
-    if not (proximo_paso or "").strip():
+    if not isinstance(proximo_paso, str) or not proximo_paso.strip():
         raise ApiError("Toda oportunidad activa necesita un próximo paso.")
     if not valid_date(fecha):
         raise ApiError("Indique la fecha del próximo paso (AAAA-MM-DD).")
@@ -502,6 +536,8 @@ def listar_opps():
 def crear_opp():
     d = body()
     eid = d.get("empresa_id")
+    db = get_db()
+    db.execute("BEGIN IMMEDIATE")
     if not one("SELECT id FROM empresas WHERE id=?", (eid,)):
         raise ApiError("Empresa no encontrada.", 404)
     ex = one("SELECT id FROM oportunidades WHERE empresa_id=? AND etapa NOT IN ('Ganado','Perdido')", (eid,))
@@ -513,7 +549,7 @@ def crear_opp():
     paso = d.get("proximo_paso") or ("Primer contacto" if etapa == "Por contactar" else "")
     fecha = d.get("proxima_fecha") or (hoy() if etapa == "Por contactar" else None)
     exigir_paso(paso, fecha)
-    cur = get_db().execute("""INSERT INTO oportunidades(empresa_id,etapa,valor_estimado,responsable,proximo_paso,proxima_fecha,caliente,creado,actualizado)
+    cur = db.execute("""INSERT INTO oportunidades(empresa_id,etapa,valor_estimado,responsable,proximo_paso,proxima_fecha,caliente,creado,actualizado)
         VALUES(?,?,?,?,?,?,?,?,?)""", (eid, etapa, num(d.get("valor_estimado")) or 0, (d.get("responsable") or "").strip() or None,
                                        paso.strip(), fecha, 1 if d.get("caliente") else 0, ahora(), ahora()))
     registrar_etapa(cur.lastrowid, etapa)
@@ -538,6 +574,7 @@ def ver_opp(oid):
 
 @app.put("/api/oportunidades/<int:oid>")
 def editar_opp(oid):
+    get_db().execute("BEGIN IMMEDIATE")
     o = get_opp(oid)
     d = body()
     upd = {}
@@ -570,6 +607,7 @@ def editar_opp(oid):
 
 @app.post("/api/oportunidades/<int:oid>/mover")
 def mover_opp(oid):
+    get_db().execute("BEGIN IMMEDIATE")
     o = get_opp(oid)
     d = body()
     etapa = d.get("etapa")
@@ -605,6 +643,8 @@ def mover_opp(oid):
 
 @app.post("/api/oportunidades/<int:oid>/cobros")
 def registrar_cobro(oid):
+    db = get_db()
+    db.execute("BEGIN IMMEDIATE")
     o = get_opp(oid)
     d = body()
     if o["etapa"] != "Ganado":
@@ -626,7 +666,7 @@ def registrar_cobro(oid):
         pend = doc["valor"] - one("SELECT COALESCE(SUM(monto),0) n FROM cobros WHERE documento_id=?", (did,))["n"]
         if m > pend + 0.005:
             raise ApiError(f"El cobro supera el saldo de la cuenta de cobro {doc['numero']} ({pend:,.0f}).")
-    cur = get_db().execute("INSERT INTO cobros(oportunidad_id,monto,fecha,nota,creado,documento_id) VALUES(?,?,?,?,?,?)",
+    cur = db.execute("INSERT INTO cobros(oportunidad_id,monto,fecha,nota,creado,documento_id) VALUES(?,?,?,?,?,?)",
                            (oid, m, f, (d.get("nota") or "").strip() or None, ahora(), did))
     get_db().commit()
     if did:
@@ -649,18 +689,43 @@ def borrar_cobro(cid):
 def crear_interaccion():
     d = body()
     eid = d.get("empresa_id")
-    if not one("SELECT id FROM empresas WHERE id=?", (eid,)):
-        raise ApiError("Empresa no encontrada.", 404)
     tipo = d.get("tipo")
     if tipo not in TIPOS_INT:
         raise ApiError("Elija el tipo de contacto.")
-    if not (d.get("resultado") or "").strip():
+    resultado = d.get("resultado")
+    if not isinstance(resultado, str) or not resultado.strip():
         raise ApiError("Registre el resultado del contacto.")
+    notas = d.get("notas")
+    if notas not in (None, "") and not isinstance(notas, str):
+        raise ApiError("Las notas deben ser texto.")
     db = get_db()
+    db.execute("BEGIN IMMEDIATE")
+    if not one("SELECT id FROM empresas WHERE id=?", (eid,)):
+        raise ApiError("Empresa no encontrada.", 404)
+    contacto_id = None
+    raw_contacto_id = d.get("contacto_id")
+    if raw_contacto_id not in (None, ""):
+        if isinstance(raw_contacto_id, bool) or not isinstance(raw_contacto_id, (str, int)):
+            raise ApiError("Contacto no válido.")
+        try:
+            contacto_id = int(raw_contacto_id)
+        except ValueError:
+            raise ApiError("Contacto no válido.")
+        if contacto_id <= 0 or not one("SELECT id FROM contactos WHERE id=? AND empresa_id=?", (contacto_id, eid)):
+            raise ApiError("El contacto no pertenece a la empresa indicada.", 404)
     opp = None
-    if d.get("oportunidad_id"):
-        opp = one("SELECT * FROM oportunidades WHERE id=? AND empresa_id=?", (d["oportunidad_id"], eid))
-    if not opp:
+    raw_oportunidad_id = d.get("oportunidad_id")
+    if raw_oportunidad_id not in (None, ""):
+        if isinstance(raw_oportunidad_id, bool) or not isinstance(raw_oportunidad_id, (str, int)):
+            raise ApiError("Oportunidad no válida.")
+        try:
+            oportunidad_id = int(raw_oportunidad_id)
+        except ValueError:
+            raise ApiError("Oportunidad no válida.")
+        opp = one("SELECT * FROM oportunidades WHERE id=? AND empresa_id=?", (oportunidad_id, eid))
+        if not opp:
+            raise ApiError("La oportunidad no pertenece a la empresa indicada.", 404)
+    else:
         opp = one("SELECT * FROM oportunidades WHERE empresa_id=? AND etapa NOT IN ('Ganado','Perdido')", (eid,))
     activa = opp is None or opp["etapa"] in ACTIVAS
     paso = (d.get("proxima_accion") or "").strip()
@@ -688,8 +753,8 @@ def crear_interaccion():
     else:
         db.execute("UPDATE oportunidades SET ultima_interaccion=?, actualizado=? WHERE id=?", (f, ahora(), oid))
     cur = db.execute("""INSERT INTO interacciones(empresa_id,oportunidad_id,contacto_id,tipo,resultado,notas,fecha,creado,primer_contacto)
-        VALUES(?,?,?,?,?,?,?,?,?)""", (eid, oid, d.get("contacto_id") or None, tipo, d["resultado"].strip(),
-                                       (d.get("notas") or "").strip() or None, f, ahora(), primer))
+        VALUES(?,?,?,?,?,?,?,?,?)""", (eid, oid, contacto_id, tipo, resultado.strip(),
+                                       (notas or "").strip() or None, f, ahora(), primer))
     db.commit()
     return jsonify({"id": cur.lastrowid, "oportunidad_id": oid, "primer_contacto": bool(primer)}), 201
 
@@ -993,14 +1058,38 @@ def importar():
         resumen["preview"] = True
         resumen["ejemplos_errores"] = [{"fila": e[0], "motivo": e[1]} for e in errs[:10]]
         return jsonify(resumen)
+
+    # Revalidar duplicados bajo lock después de analizar el archivo fuera de la transacción.
+    db.execute("BEGIN IMMEDIATE")
+    nit_actual = {r["nit"]: r["id"] for r in rows("SELECT id,nit FROM empresas WHERE nit IS NOT NULL")}
+    norm_actual = {}
+    for r in rows("SELECT id,razon_norm FROM empresas"):
+        norm_actual.setdefault(r["razon_norm"], r["id"])
+    registros_confirmados = []
+    ids = {}
+    for marcador, (n, r, emp, ct, flags) in enumerate(registros, start=1):
+        nit, rn = emp["nit"], emp["razon_norm"]
+        existente = nit_actual.get(nit) if nit else norm_actual.get(rn)
+        if existente:
+            motivo = "NIT ya existe en el CRM (no se sobrescribió)" if nit else "Misma razón social ya existe (sin NIT)"
+            dups.append((n, motivo, r, existente))
+            ids[-marcador] = existente
+            continue
+        registros_confirmados.append((marcador, (n, r, emp, ct, flags)))
+        if nit:
+            nit_actual[nit] = -marcador
+        norm_actual.setdefault(rn, -marcador)
+    registros = registros_confirmados
+    resumen.update(nuevas=len(registros), duplicadas=len(dups),
+                   para_revisar=sum(1 for _, registro in registros if registro[4]))
+
     # ---- escritura
     cur = db.execute("INSERT INTO importaciones(archivo,fecha,total,nuevas,duplicadas,errores,revisar) VALUES(?,?,?,?,?,?,?)",
                      (f.filename, tcol, resumen["filas"], resumen["nuevas"], resumen["duplicadas"], resumen["errores"], resumen["para_revisar"]))
     imp_id = cur.lastrowid
-    ids = {}
-    for idx, (n, r, emp, ct, flags) in enumerate(registros, start=1):
+    for marcador, (n, r, emp, ct, flags) in registros:
         c = db.execute(f"INSERT INTO empresas({','.join(emp)}) VALUES({','.join('?' * len(emp))})", list(emp.values()))
-        ids[-idx] = c.lastrowid
+        ids[-marcador] = c.lastrowid
         if any(ct.values()):
             db.execute("INSERT INTO contactos(empresa_id,nombre,cargo,telefono,correo,creado) VALUES(?,?,?,?,?,?)",
                        (c.lastrowid, ct["nombre"], ct["cargo"], ct["telefono"], ct["correo"], tcol))
