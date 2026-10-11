@@ -80,7 +80,7 @@ chk("dashboard contactos nuevos=1", h["contactos_nuevos"] == 1, h)
 chk("dashboard seguimientos=1", h["seguimientos"] == 1, h)
 chk("dashboard propuestas/reuniones=1", h["propuestas"] == 1 and h["reuniones"] == 1, h)
 chk("vendido ≠ cobrado y cobrado=4M", h["vendido"] == 4000000 and h["cobrado"] == 4000000 and d["ganadas"]["por_cobrar"] == 0)
-chk("metas por defecto", d["metas"]["contactos_nuevos"] == 20 and d["metas"]["cobro_diario"] == 1000000)
+chk("metas por defecto", d["metas"]["contactos_nuevos"] == 20 and d["metas"]["ventas_cerradas"] == 1000000 and d["metas"]["cobro_diario"] == 1000000)
 chk("edita metas", c.put("/api/metas", json={"propuestas": 5}).status_code == 200 and J(c.get("/api/metas"))["propuestas"] == 5)
 
 # 7 HOY, vencidos, sin paso

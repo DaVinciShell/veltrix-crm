@@ -1,6 +1,7 @@
 """Pruebas de las mejoras (calidad, puntaje, documentos, recordatorios, mensajes, seguridad, copias).
 Usa una base temporal. Ejecutar:  python tests/test_mejoras.py"""
 import io, json, os, sqlite3, sys, tempfile
+from unittest.mock import patch
 HERE = os.path.dirname(os.path.abspath(__file__))
 tmp = tempfile.mkdtemp()
 os.environ.update(VELTRIX_DATA=tmp, VELTRIX_AUTH="0", VELTRIX_SEGUNDO_PLANO="0")
@@ -26,6 +27,18 @@ r = c.post("/api/importar", data={"archivo": (io.BytesIO(build_workbook()), "emp
 chk("importa empresas sintéticas y clasifica", r.status_code == 201 and J(r)["nuevas"] == SYNTHETIC_COMPANIES)
 db = sqlite3.connect(A.DB_PATH)
 chk("todas clasificadas y puntuadas", db.execute("select count(*) from empresas where calidad is null or score is null").fetchone()[0] == 0)
+agenda = J(c.get("/api/agenda/ejecutiva"))
+chk("agenda: cuatro bloques con tres objetivos", len(agenda["bloques"]) == 4 and all(len(b["objetivos"]) == 3 for b in agenda["bloques"]))
+chk("agenda: ventas cerradas separadas de cobros", agenda["reporte"]["ventas_cerradas"]["meta_cop"] == 1000000 and agenda["reporte"]["dinero_cobrado"]["meta_cop"] == 1000000)
+chk("reporte ejecutivo agregado", J(c.get("/api/reportes/ejecutivo"))["actividad"]["contactos_nuevos"] == 0)
+P("/api/tareas", {"titulo": "Reunion sintetica", "tipo": "Reunión", "fecha": A.hoy(), "hora": "10:30"})
+agenda = J(c.get("/api/agenda/ejecutiva"))
+chk("agenda: ubica compromisos con hora", any(k["titulo"] == "Reunion sintetica" for k in agenda["bloques"][1]["compromisos"]))
+with patch.dict(os.environ, {"OPENAI_API_KEY": "", "VELTRIX_OPENAI_ENABLED": ""}):
+    ia_status = J(c.get("/api/ia/estado"))
+    ia_context = J(c.get("/api/ia/contexto"))
+chk("IA permanece desconectada sin exponer clave", not ia_status["api_key_configurada"] and not ia_status["llamadas_externas"] and "OPENAI_API_KEY" not in json.dumps(ia_status))
+chk("contexto IA contiene solo métricas agregadas", "ventas_cerradas_hoy_cop" in ia_context and "empresas" not in ia_context and "contactos" not in ia_context)
 
 # 1 calidad
 for n in ("SAS", "sas", "0"):

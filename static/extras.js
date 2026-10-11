@@ -3,7 +3,30 @@ const lines = t => (t || '').split('\n').map(x => x.trim()).filter(Boolean);
 const num = v => Number(String(v || '').replace(/[^\d.-]/g, '')) || 0;
 const stTag = s => `<span class="st ${s}">${s}</span>`;
 const nivelTxt = { vencido: 'Vencido', hoy: 'Hoy', proximo: 'Próximos 7 días' };
-window.EXTRA_ROUTES = { calidad: vCalidad, documentos: vDocs, tareas: vTareas, config: vConfig };
+window.EXTRA_ROUTES = { agenda: vAgenda, calidad: vCalidad, documentos: vDocs, tareas: vTareas, config: vConfig };
+
+/* ---------- agenda y reporte ejecutivo (solo datos agregados) ---------- */
+async function vAgenda() {
+  const d = await api('/api/agenda/ejecutiva'); const r = d.reporte;
+  const cop = n => COP(n || 0);
+  const unidad = (n, u) => {
+    const singular = { empresas: 'empresa', propuestas: 'propuesta', pendientes: 'pendiente', acciones: 'acción', reuniones: 'reunión' };
+    return `${NUM(n)} ${n === 1 ? (singular[u] || u) : u}`;
+  };
+  const kpi = (titulo, actual, meta) => `<div class="card kpi"><div class="l">${titulo}</div><div class="v">${cop(actual)}</div><div class="sm mut">Meta diaria ${cop(meta)}</div></div>`;
+  const bloques = d.bloques.map(b => `<div class="card"><div class="row sp"><h2>${esc(b.nombre)}</h2><span class="tag">${b.inicio}–${b.fin}</span></div>
+    ${b.objetivos.map(o => `<div class="item"><div class="main"><b>${esc(o.nombre)}</b><div class="sm mut">Meta del bloque: ${o.unidad === 'COP' ? cop(o.meta) : esc(unidad(o.meta, o.unidad))}${o.avance_dia != null ? ` · avance diario ${o.unidad === 'COP' ? cop(o.avance_dia) : esc(unidad(o.avance_dia, o.unidad))}` : ''}</div></div></div>`).join('')}
+    ${(b.compromisos || []).map(k => `<div class="item"><div class="main"><a href="${esc(k.link)}"><b>${esc(k.titulo)}</b></a><div class="sm mut">${esc(k.tipo)}${k.hora ? ' · ' + esc(k.hora) : ''} · ${esc(k.detalle)}</div></div></div>`).join('')}
+  </div>`).join('');
+  view.innerHTML = `<div class="row sp"><h1>Agenda ejecutiva · ${fmtF(d.fecha)}</h1></div>
+  <div class="grid g4">${kpi('Ventas cerradas', r.ventas_cerradas.cop, r.ventas_cerradas.meta_cop)}${kpi('Dinero cobrado', r.dinero_cobrado.cop, r.dinero_cobrado.meta_cop)}
+    <div class="card kpi"><div class="l">Contactos nuevos</div><div class="v">${NUM(r.actividad.contactos_nuevos)}</div><div class="sm mut">Seguimientos ${NUM(r.actividad.seguimientos)}</div></div>
+    <div class="card kpi"><div class="l">Seguimientos vencidos</div><div class="v">${NUM(r.pendientes.seguimientos_vencidos)}</div><div class="sm mut">Sin próximo paso ${NUM(r.pendientes.sin_proximo_paso)}</div></div></div>
+  <div class="grid g2" style="margin-top:12px">${bloques}</div>
+  ${d.sin_horario.length ? `<div class="card"><h2>Compromisos sin hora asignada</h2>${d.sin_horario.map(k => `<div class="item"><div class="main"><a href="${esc(k.link)}"><b>${esc(k.titulo)}</b></a><div class="sm mut">${esc(k.tipo)} · ${esc(k.detalle)}</div></div></div>`).join('')}</div>` : ''}
+  <div class="card"><h2>Reporte ejecutivo</h2><div class="sm" style="white-space:pre-line">${esc(r.texto)}</div></div>
+  <div class="sm mut">${esc(d.nota)}</div>`;
+}
 
 /* ---------- campana de avisos (solo suena con el CRM abierto) ---------- */
 async function pulso() {
@@ -220,7 +243,7 @@ window.vDash = async () => {
 /* ---------- Configuración ---------- */
 const fld = (n, l, v, ph = '') => `<div><label>${l}</label><input name="${n}" value="${esc(v ?? '')}" placeholder="${esc(ph)}"></div>`;
 async function vConfig() {
-  const [em, sc, pr, pls, es, rs, fe, au] = await Promise.all([api('/api/config/emisor'), api('/api/config/scoring'), api('/api/config/prospeccion'), api('/api/plantillas'), api('/api/avisos/estado'), api('/api/respaldos'), api('/api/facturacion/estado'), api('/api/auth/estado')]);
+  const [em, sc, pr, pls, es, rs, fe, au, ia] = await Promise.all([api('/api/config/emisor'), api('/api/config/scoring'), api('/api/config/prospeccion'), api('/api/plantillas'), api('/api/avisos/estado'), api('/api/respaldos'), api('/api/facturacion/estado'), api('/api/auth/estado'), api('/api/ia/estado')]);
   const c = sc.config;
   view.innerHTML = `<h1>Configuración</h1>
   <div class="card"><h2>Datos del emisor (aparecen en propuestas y cuentas de cobro)</h2><form id="fem"><div class="f2">${fld('nombre', 'Nombre completo *', em.nombre)}${fld('nombre_comercial', 'Nombre comercial', em.nombre_comercial)}${fld('documento', 'Documento de identificación', em.documento)}${fld('ciudad', 'Ciudad', em.ciudad)}${fld('direccion', 'Dirección', em.direccion)}${fld('telefono', 'Teléfono', em.telefono)}${fld('correo', 'Correo', em.correo)}${fld('titular_cuenta', 'Titular de la cuenta', em.titular_cuenta)}${fld('banco', 'Banco', em.banco)}${fld('tipo_cuenta', 'Tipo de cuenta', em.tipo_cuenta)}${fld('numero_cuenta', 'Número de cuenta', em.numero_cuenta)}${fld('vigencia_dias', 'Vigencia de propuestas (días)', em.vigencia_dias)}${fld('dias_pago', 'Plazo de pago (días)', em.dias_pago)}</div>
@@ -236,6 +259,7 @@ async function vConfig() {
    ${pls.map(p => `<details style="margin-top:8px"><summary><b>${esc(p.nombre)}</b> · ${p.canal}</summary><form class="fpl" data-id="${p.id}">${p.canal === 'correo' ? `<label>Asunto</label><input name="asunto" style="width:100%" value="${esc(p.asunto)}">` : ''}${campoTxt('cuerpo', 'Mensaje', p.cuerpo, 5)}<button class="btn sm primary" style="margin-top:6px">Guardar</button></form></details>`).join('')}</div>
   <div class="card"><h2>Avisos</h2><div class="sm">${esc(es.nota)}</div><div class="sm" style="margin:8px 0">Resumen por correo: <b>${es.correo_configurado ? 'configurado → ' + esc(es.destino) : 'no configurado'}</b>${es.ultimo_resumen ? ' · último envío ' + es.ultimo_resumen : ''}. Se configura con variables de entorno (ver README); las claves nunca se guardan en el código ni en la base.</div>
    <div class="acts"><button class="btn" id="bnot">Activar avisos de escritorio (navegador)</button><button class="btn" id="bmail" ${es.correo_configurado ? '' : 'disabled'}>Enviar resumen de prueba</button></div></div>
+  <div class="card"><h2>Asistencia IA</h2><div class="sm">OpenAI: ${ia.api_key_configurada ? 'variable configurada' : 'sin configurar'} · integración ${esc(ia.integracion)} · modelo ${esc(ia.modelo_configurado)}. Esta versión no realiza solicitudes externas. Gemini aún no está integrado.</div></div>
   <div class="card"><h2>Seguridad y copias</h2><div class="sm">Sesión: <b>${esc(au.usuario || '—')}</b> · <a href="#" id="lo">Cerrar sesión</a></div>
    <form id="fcl" class="f2"><div><label>Contraseña actual</label><input type="password" name="actual"></div><div><label>Nueva (mín. 10)</label><input type="password" name="nueva"></div><div><button class="btn sm primary" style="margin-top:8px">Cambiar contraseña</button></div></form>
    <div class="row sp" style="margin-top:12px"><h2 style="margin:0">Copias de seguridad (${rs.length})</h2><button class="btn" id="bres">Crear copia ahora</button></div>

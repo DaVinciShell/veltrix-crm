@@ -20,6 +20,8 @@ from flask import Flask, Response, g, jsonify, request, send_file, send_from_dir
 import mejoras_avisos as MA
 import mejoras_base as MB
 import mejoras_docs as MD
+import mejoras_agenda as MAG
+import mejoras_ia as MIA
 import mejoras_seguridad as MS
 import mejoras_tablero as MT
 
@@ -34,7 +36,7 @@ ACTIVAS = ETAPAS[:7]
 CALIENTES = {"Calificado", "Reunión agendada", "Propuesta enviada", "Negociación"}
 TIPOS_INT = ["Llamada", "Mensaje", "Correo", "Reunión"]
 METAS_DEF = {"contactos_nuevos": 20, "seguimientos": 10, "propuestas": 3,
-             "reuniones": 3, "cobro_diario": 1000000}
+             "reuniones": 3, "ventas_cerradas": 1000000, "cobro_diario": 1000000}
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024
@@ -1065,7 +1067,7 @@ def config():
     return jsonify({"etapas": ETAPAS, "activas": ACTIVAS, "calientes": sorted(CALIENTES), "tipos": TIPOS_INT, "hoy": hoy()})
 
 
-for _m in (MS, MB, MD, MA, MT):
+for _m in (MS, MB, MD, MA, MT, MAG, MIA):
     _m.register(app, sys.modules[__name__])
 init_db()
 

@@ -19,6 +19,7 @@ CRM comercial para prospectar, dar seguimiento, proponer, cerrar y cobrar. Datos
 | Mensajes | Plantillas editables de WhatsApp y correo; abre WhatsApp / correo; usted envía | Botón Mensaje |
 | Tareas y avisos | Recordatorios con fecha, hora y frecuencia; centro de notificaciones; 🔔 | Tareas y avisos |
 | Tablero | Prioritarias, propuestas, documentos, por cobrar, vencidas, recibido hoy/semana/mes, conversión, sectores | Dashboard |
+| Agenda ejecutiva | Cuatro bloques, tres metas por bloque; ventas cerradas y cobros se miden por separado | Agenda ejecutiva |
 | Seguridad | Login con hash, sesión protegida, copias automáticas diarias, restauración | Configuración |
 
 ## Puntaje: cómo se calcula
@@ -34,6 +35,11 @@ Suma ponderada (0-100): ubicación 25, sector 25, tamaño 20, datos de contacto 
 
 ## Notificación externa opcional
 `resumen_diario.py` solo envía una notificación cuando `VELTRIX_NTFY_ENABLED=1` y `VELTRIX_NTFY_TOPIC` están configuradas. El servidor ntfy usa `VELTRIX_NTFY_SERVER` (por defecto `https://ntfy.sh`) y, si es privado, `VELTRIX_NTFY_TOKEN`. Sin activación explícita, el script no realiza solicitudes de red. No incluya tokens en archivos versionados ni argumentos de comandos.
+
+## Agenda, IA y piloto
+- La agenda determinista distribuye metas y ubica los compromisos locales con hora; los pendientes sin hora quedan separados. El reporte distingue ventas cerradas de dinero cobrado. No se ha creado una tarea programada de Windows ni se envía este reporte automáticamente.
+- `/api/ia/estado` informa solo si `OPENAI_API_KEY` está presente; `/api/ia/contexto` entrega métricas agregadas sin nombres ni contactos. No hay cliente OpenAI, no se realizan solicitudes externas y configurar la variable no activa llamadas. Gemini sigue pendiente.
+- Las suites de pruebas usan empresas sintéticas en memoria. El piloto validado es técnico; no se han contactado empresas reales ni enviado mensajes.
 
 ## Lo que NO incluye (requiere credenciales, permisos o costo)
 - **Factura electrónica:** exige un proveedor tecnológico habilitado por la DIAN. El CRM no la simula; genera *cuentas de cobro*.
