@@ -147,12 +147,17 @@ class FakeSMTP:
     def __init__(s, h, p, timeout=0): sent.append(("conn", h, p))
     def __enter__(s): return s
     def __exit__(s, *a): pass
+    def ehlo(s): sent.append("ehlo")
     def starttls(s): sent.append("tls")
     def login(s, u, p): sent.append(("login", u))
-    def send_message(s, m): sent.append(("msg", m["Subject"], m["To"], m.get_content()))
+    def send_message(s, m):
+        parte = m.get_body(preferencelist=("plain",)) if m.is_multipart() else m
+        cuerpo = parte.get_content()
+        sent.append(("msg", m["Subject"], m["To"], cuerpo))
 MA.smtplib.SMTP = FakeSMTP
 os.environ.update(VELTRIX_SMTP_HOST="smtp.test", VELTRIX_SMTP_USER="u", VELTRIX_SMTP_PASS="p", VELTRIX_SMTP_TO="yo@x.co")
-chk("resumen por correo (SMTP simulado)", P("/api/avisos/probar-correo").status_code == 200 and any(isinstance(x, tuple) and x[0] == "msg" and "Cobro vencido" in x[3] for x in sent))
+resp_correo = P("/api/avisos/probar-correo")
+chk("resumen por correo (SMTP simulado)", resp_correo.status_code == 200 and any(isinstance(x, tuple) and x[0] == "msg" and "Cobro vencido" in x[3] for x in sent))
 
 # 6 copias y restauración
 b = MS.hacer_respaldo(A, "manual"); chk("copia verificada", b["empresas"] >= SYNTHETIC_COMPANIES and os.path.exists(os.path.join(tmp, "respaldos", b["archivo"])))
