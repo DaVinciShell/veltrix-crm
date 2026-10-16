@@ -101,15 +101,19 @@ def smtp_config():
     return c if c["host"] and c["user"] and c["pass"] and c["to"] else None
 
 
-def enviar_correo(asunto, cuerpo, conf=None):
+def enviar_correo(asunto, cuerpo, conf=None, html=None):
     c = conf or smtp_config()
     if not c:
         raise RuntimeError("SMTP no configurado (variables VELTRIX_SMTP_HOST, _PORT, _USER, _PASS, _FROM, _TO).")
     m = EmailMessage()
     m["Subject"], m["From"], m["To"] = asunto, c.get("from") or c["user"], c["to"]
     m.set_content(cuerpo)
+    if html:
+        m.add_alternative(html, subtype="html")
     with smtplib.SMTP(c["host"], int(c.get("port") or 587), timeout=30) as s:
+        s.ehlo()
         s.starttls()
+        s.ehlo()
         s.login(c["user"], c["pass"])
         s.send_message(m)
 
@@ -160,9 +164,352 @@ def register(app, A):
                 L.append("")
         return "\n".join(L)
 
+    def agenda_texto():
+        agenda = A.construir_agenda(A.hoy())
+        lineas = [
+            f"VELTRIX | AGENDA EJECUTIVA · {agenda['fecha']}",
+            "",
+            "META COMERCIAL DIARIA",
+            "Ventas cerradas: $1.000.000 COP (meta configurable en el CRM)",
+            "Dinero cobrado: $1.000.000 COP (meta configurable en el CRM)",
+            "",
+            "AGENDA POR BLOQUES"
+        ]
+
+        for bloque in agenda["bloques"]:
+            lineas.append(
+                f"\n{bloque['inicio']}-{bloque['fin']} | {bloque['nombre']}"
+            )
+            for objetivo in bloque["objetivos"]:
+                meta = objetivo.get("meta", "")
+                unidad = objetivo.get("unidad", "")
+                avance = objetivo.get("avance_dia")
+                texto = f"- {objetivo['nombre']}: meta {meta} {unidad}".rstrip()
+                if avance is not None:
+                    texto += f" | avance del día: {avance}"
+                lineas.append(texto)
+
+            for compromiso in bloque.get("compromisos", []):
+                lineas.append(
+                    f"- COMPROMISO: {compromiso['titulo']} "
+                    f"{compromiso.get('hora') or ''} — "
+                    f"{compromiso.get('detalle') or ''}"
+                )
+
+        if agenda["sin_horario"]:
+            lineas.extend(["", "COMPROMISOS SIN BLOQUE HORARIO"])
+            for item in agenda["sin_horario"]:
+                lineas.append(
+                    f"- {item['fecha']} {item.get('hora') or ''} "
+                    f"{item['titulo']} — {item.get('detalle') or ''}"
+                )
+
+        lineas.extend([
+            "",
+            "REPORTE COMERCIAL DEL CRM",
+            agenda["reporte"]["texto"],
+            "",
+            "ALERTAS Y SEGUIMIENTOS",
+            resumen_texto(),
+            "",
+            "Nota: la agenda propone metas por bloque; el CRM mide el avance diario."
+        ])
+        return "\n".join(lineas)
+
+    A.agenda_texto = agenda_texto
+
+    def agenda_html():
+        from html import escape
+
+        agenda = A.construir_agenda(A.hoy())
+        r = agenda.get("reporte", {})
+
+        def e(v):
+            return escape(str(v if v is not None else ""), quote=True)
+
+        def cop(v):
+            try:
+                return "COP $" + f"{round(float(v)):,}".replace(",", ".")
+            except (TypeError, ValueError):
+                return "Sin datos"
+
+        def money_metric(obj, key="cop"):
+            if not isinstance(obj, dict) or key not in obj or obj[key] is None:
+                return "Sin datos"
+            return cop(obj[key])
+
+        ventas = r.get("ventas_cerradas") or {}
+        cobros = r.get("dinero_cobrado") or {}
+        pipeline = r.get("pipeline") or {}
+        pendientes = r.get("pendientes") or {}
+        actividad = r.get("actividad") or {}
+
+        def kpi(title, value, detail, accent):
+            return (
+                '<td width="50%" valign="top" style="padding:5px">'
+                '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+                'style="border:1px solid #dce5ef;border-radius:10px;border-collapse:separate">'
+                f'<tr><td style="padding:13px 14px 12px;border-top:3px solid {accent};'
+                'border-radius:9px;background:#ffffff">'
+                f'<div style="font:11px Arial,sans-serif;letter-spacing:.7px;color:#64748b">'
+                f'{e(title)}</div>'
+                f'<div style="font:bold 21px Arial,sans-serif;color:#101c2e;margin:8px 0">'
+                f'{e(value)}</div>'
+                f'<div style="font:12px Arial,sans-serif;line-height:1.4;color:#64748b">'
+                f'{e(detail)}</div>'
+                '</td></tr></table></td>'
+            )
+
+        def progress(obj):
+            if not isinstance(obj, dict):
+                return "Avance no disponible"
+            actual = obj.get("cop")
+            meta = obj.get("meta_cop")
+            if actual is None or meta is None:
+                return "Avance no disponible"
+            try:
+                actual, meta = float(actual), float(meta)
+                if meta <= 0:
+                    return f"Real: {cop(actual)} · Meta: {cop(meta)}"
+                pct = max(0, min(100, round(actual / meta * 100)))
+                return f"{pct}% cumplido · Faltan {cop(max(0, meta-actual))}"
+            except (TypeError, ValueError):
+                return "Avance no disponible"
+
+        kpis = (
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+            'style="border-collapse:collapse"><tr>'
+            + kpi("VENTAS CERRADAS", money_metric(ventas),
+                  progress(ventas), "#6366f1")
+            + kpi("DINERO COBRADO", money_metric(cobros),
+                  progress(cobros), "#13b8a6")
+            + '</tr><tr>'
+            + kpi("PIPELINE ACTIVO",
+                  cop(pipeline.get("valor")) if "valor" in pipeline else "Sin datos",
+                  (f'{pipeline.get("n")} oportunidades' if "n" in pipeline
+                   else "Cantidad no disponible"), "#4f8cff")
+            + kpi("SEGUIMIENTOS VENCIDOS",
+                  str(pendientes["seguimientos_vencidos"])
+                  if "seguimientos_vencidos" in pendientes else "Sin datos",
+                  (f'Sin próximo paso: {pendientes["sin_proximo_paso"]}'
+                   if "sin_proximo_paso" in pendientes else "Revisar próximos pasos"),
+                  "#f59e0b")
+            + '</tr></table>'
+        )
+
+        # Tres prioridades como máximo, derivadas de los objetivos existentes.
+        prioridades = []
+        vistos = set()
+        for bloque in agenda.get("bloques", []):
+            for objetivo in bloque.get("objetivos", []):
+                nombre = str(objetivo.get("nombre", "")).strip()
+                if nombre and nombre.lower() not in vistos:
+                    vistos.add(nombre.lower())
+                    detalle = " ".join(
+                        str(objetivo.get(k, "")).strip()
+                        for k in ("detalle", "descripcion")
+                        if objetivo.get(k)
+                    )
+                    meta = objetivo.get("meta")
+                    unidad = objetivo.get("unidad", "")
+                    if meta not in (None, ""):
+                        detalle = (detalle + " · " if detalle else "") + f"Meta: {meta} {unidad}".strip()
+                    prioridades.append((nombre, detalle))
+                if len(prioridades) >= 3:
+                    break
+            if len(prioridades) >= 3:
+                break
+
+        if not prioridades:
+            prioridades = [
+                ("Activar el pipeline comercial", "Registrar prospectos reales y definir el siguiente paso."),
+                ("Avanzar oportunidades", "Priorizar conversaciones y propuestas con potencial de cierre."),
+                ("Gestionar cobros", "Verificar compromisos de pago y dinero recibido.")
+            ]
+
+        priority_html = []
+        for i, (nombre, detalle) in enumerate(prioridades, 1):
+            tint, ink = [("#dff8f3", "#087f73"),
+                         ("#e8eafe", "#4f46e5"),
+                         ("#fff1dc", "#a65d08")][i-1]
+            priority_html.append(
+                '<tr><td width="42" valign="top" style="padding:7px 8px 7px 0">'
+                f'<div style="background:{tint};color:{ink};text-align:center;'
+                'font:bold 14px Arial;padding:10px 0;border-radius:8px">'
+                f'{i:02d}</div></td>'
+                '<td valign="top" style="padding:8px 0;border-bottom:1px solid #e8edf4">'
+                f'<div style="font:bold 14px Arial;color:#17263a">{e(nombre)}</div>'
+                f'<div style="font:12px Arial;line-height:1.5;color:#64748b;margin-top:3px">'
+                f'{e(detalle or "Ejecutar y registrar el resultado en el CRM.")}</div>'
+                '</td></tr>'
+            )
+
+        # Cada bloque muestra como máximo dos acciones breves.
+        blocks_html = []
+        for b in agenda.get("bloques", []):
+            items = []
+            for o in b.get("objetivos", []):
+                label = str(o.get("nombre", "")).strip()
+                if label:
+                    meta = o.get("meta")
+                    unidad = o.get("unidad", "")
+                    suffix = f" · Meta: {meta} {unidad}".strip() if meta not in (None, "") else ""
+                    items.append(label + suffix)
+                if len(items) >= 2:
+                    break
+            for c in b.get("compromisos", []):
+                if len(items) >= 2:
+                    break
+                title = str(c.get("titulo", "")).strip()
+                if title:
+                    items.append(title)
+            if not items:
+                items = ["Revisar prioridades comerciales y registrar avances."]
+            rows = "".join(
+                '<tr><td style="padding:5px 0;font:13px Arial;line-height:1.45;color:#334155">'
+                f'<span style="color:#0d9488;font-weight:bold">›</span> {e(item)}</td></tr>'
+                for item in items
+            )
+            blocks_html.append(
+                '<tr><td width="78" valign="top" style="padding:12px 8px 12px 0;'
+                'font:bold 12px Arial;color:#0d9488;white-space:nowrap">'
+                f'{e(b.get("inicio", ""))}<br><span style="color:#94a3b8;font-weight:normal">'
+                f'{e(b.get("fin", ""))}</span></td>'
+                '<td valign="top" style="padding:9px 0;border-bottom:1px solid #e5ebf2">'
+                f'<div style="font:bold 14px Arial;color:#17263a">{e(b.get("nombre", "Bloque"))}</div>'
+                f'<table role="presentation" cellpadding="0" cellspacing="0" width="100%">'
+                f'{rows}</table></td></tr>'
+            )
+
+        # Máximo tres alertas urgentes; no imprimir el informe completo.
+        alertas = notificaciones()
+        urgent_items = [
+            i for i in alertas.get("items", [])
+            if i.get("nivel") in ("vencido", "hoy")
+        ][:3]
+        alert_rows = []
+        for item in urgent_items:
+            is_late = item.get("nivel") == "vencido"
+            color = "#b91c1c" if is_late else "#a16207"
+            label = "VENCIDO" if is_late else "HOY"
+            alert_rows.append(
+                '<tr><td style="padding:8px 0;border-bottom:1px solid #f1e5d6;'
+                'font:12px Arial;line-height:1.45">'
+                f'<strong style="color:{color}">{label} · {e(item.get("fecha", ""))}</strong>'
+                f'<div style="color:#334155;margin-top:3px">{e(item.get("titulo", ""))}</div>'
+                '</td></tr>'
+            )
+        if not alert_rows:
+            alert_rows.append(
+                '<tr><td style="padding:8px 0;font:12px Arial;color:#64748b">'
+                'No hay alertas críticas registradas para hoy.</td></tr>'
+            )
+
+        fecha = e(agenda.get("fecha", A.hoy()))
+        return f"""<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>VELTRIX | Executive Command Center</title>
+</head>
+<body style="margin:0;padding:0;background:#edf1f6;font-family:Arial,Helvetica,sans-serif;color:#17263a">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#edf1f6">
+<tr><td align="center" style="padding:18px 8px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+style="max-width:680px;border-collapse:separate;background:#ffffff;border-radius:14px;overflow:hidden">
+
+<tr><td bgcolor="#0b1220" style="padding:24px 22px 22px;color:#ffffff">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+<td valign="middle">
+<div style="font:bold 22px Arial;letter-spacing:2px;color:#ffffff">VELTRIX<span style="color:#13d6c5">.</span></div>
+<div style="font:10px Arial;letter-spacing:1.5px;color:#a7b7cd;margin-top:5px">EXECUTIVE COMMAND CENTER</div>
+</td>
+<td align="right" valign="middle">
+<span style="background:#123b40;color:#69f0df;border-radius:20px;padding:7px 9px;font:bold 10px Arial">AGENDA DIARIA</span>
+</td></tr></table>
+<div style="font:11px Arial;letter-spacing:1px;color:#a7b7cd;margin-top:22px">{fecha}</div>
+<div style="font:bold 25px Arial;line-height:1.2;color:#ffffff;margin-top:7px">Hoy se ejecuta para vender.</div>
+<div style="font:13px Arial;line-height:1.5;color:#cbd5e1;margin-top:8px">Foco del día: convertir oportunidades comerciales en ventas y dinero efectivamente cobrado.</div>
+</td></tr>
+
+<tr><td bgcolor="#101c2e" style="padding:0 17px 18px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+style="border:1px solid #2d4158;border-radius:10px;background:#17263a">
+<tr><td style="padding:15px 16px">
+<div style="font:11px Arial;letter-spacing:1px;color:#a7b7cd">OBJETIVO FINANCIERO</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+<td style="padding-top:7px">
+<div style="font:bold 23px Arial;color:#ffffff">Ventas: {e(money_metric(ventas))}</div>
+<div style="font:bold 18px Arial;color:#6de5d5;margin-top:5px">Cobros: {e(money_metric(cobros))}</div>
+</td>
+<td align="right" valign="middle" style="padding-left:8px">
+<div style="font:11px Arial;color:#a7b7cd">Meta ventas</div>
+<div style="font:bold 13px Arial;color:#ffffff">{e(cop(ventas.get("meta_cop")))}</div>
+<div style="font:11px Arial;color:#a7b7cd;margin-top:7px">Meta cobros</div>
+<div style="font:bold 13px Arial;color:#ffffff">{e(cop(cobros.get("meta_cop")))}</div>
+</td></tr></table>
+</td></tr></table>
+</td></tr>
+
+<tr><td style="padding:17px 17px 0">
+<div style="font:bold 15px Arial;color:#17263a;margin:0 0 7px">PANORAMA DEL NEGOCIO</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">{kpis}</table>
+</td></tr>
+
+<tr><td style="padding:19px 22px 0">
+<div style="font:bold 15px Arial;color:#17263a;margin-bottom:6px">TUS 3 PRIORIDADES</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+{''.join(priority_html)}
+</table>
+</td></tr>
+
+<tr><td style="padding:20px 22px 0">
+<div style="font:bold 15px Arial;color:#17263a;margin-bottom:5px">RUTA DE EJECUCIÓN</div>
+<div style="font:12px Arial;color:#64748b;margin-bottom:5px">Cuatro bloques. Máximo dos acciones por bloque.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+{''.join(blocks_html)}
+</table>
+</td></tr>
+
+<tr><td style="padding:19px 22px 0">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+style="border:1px solid #f2dfbf;border-radius:9px;background:#fffaf1">
+<tr><td style="padding:12px 14px">
+<div style="font:bold 12px Arial;color:#a16207">ALERTAS QUE REQUIEREN ATENCIÓN</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+{''.join(alert_rows)}
+</table>
+</td></tr></table>
+</td></tr>
+
+<tr><td style="padding:18px 22px 22px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+style="background:#0b1220;border-radius:9px">
+<tr><td style="padding:13px 15px">
+<div style="font:bold 12px Arial;color:#69f0df">REGLA DEL DÍA</div>
+<div style="font:12px Arial;line-height:1.6;color:#ffffff;margin-top:5px">
+Cada acción debe acercarnos a una venta, un cierre o un cobro. Los resultados se registran en el CRM.
+</div>
+</td></tr></table>
+<div style="font:10px Arial;line-height:1.5;color:#94a3b8;text-align:center;margin-top:12px">
+Generado desde los datos disponibles en el CRM VELTRIX.
+</div>
+</td></tr>
+</table>
+</td></tr></table>
+</body></html>"""
+
+    A.agenda_html = agenda_html
+
     def enviar_resumen():
-        cfg = MB.cfg_get(A.get_db(), "avisos", {})
-        enviar_correo(f"VELTRIX · resumen del {A.hoy()}", resumen_texto())
+        cuerpo = agenda_texto()
+        enviar_correo(
+            f"VELTRIX · agenda ejecutiva y alertas · {A.hoy()}",
+            cuerpo,
+            html=agenda_html()
+        )
         MB.cfg_set(A.get_db(), "ultimo_resumen", A.hoy())
         A.get_db().commit()
         return True

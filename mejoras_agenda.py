@@ -92,6 +92,8 @@ def register(app, A):
         return {"fecha": fecha, "bloques": bloques, "sin_horario": sin_horario, "reporte": reporte,
                 "nota": "La agenda propone metas por bloque; el CRM mide el avance diario, no el cumplimiento por hora."}
 
+    A.construir_agenda = construir_agenda
+
     @app.get("/api/agenda/ejecutiva")
     def api_agenda_ejecutiva():
         return jsonify(construir_agenda(A.hoy()))
